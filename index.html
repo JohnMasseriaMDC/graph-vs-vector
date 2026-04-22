@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Graph vs. Vector Databases — Practical Examples</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0f0f1a;
+    color: #e8e8e8;
+    font-family: 'DM Sans', sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
+  button { cursor: pointer; }
+  button:hover { opacity: 0.85; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState } = React;
+
+const graphExamples = [
+  {
+    title: "Fraud Detection Ring",
+    industry: "Financial Services",
+    icon: "\u{1F50D}",
+    scenario: "A bank needs to detect coordinated fraud \u2014 multiple accounts sharing phone numbers, addresses, or devices that form suspicious clusters.",
+    howItWorks: [
+      "Each customer, account, phone number, device, and address is a node",
+      "Edges represent relationships: OWNS_ACCOUNT, USES_DEVICE, LIVES_AT",
+      "Traversal query: 'Find all accounts within 3 hops of this flagged account that share a device or address'",
+      "Pattern matching reveals fraud rings invisible to row-by-row SQL analysis",
+    ],
+    query: `MATCH (flagged:Account {status:'flagged'})-[:USES_DEVICE]->
+  (d:Device)<-[:USES_DEVICE]-(other:Account)
+WHERE other <> flagged
+RETURN other.id, d.fingerprint, count(*) AS shared`,
+    queryLang: "Cypher (Neo4j)",
+    whyNotSQL: "Detecting rings requires recursive multi-hop joins across several entity types. In SQL, you'd need multiple self-joins with unknown depth \u2014 graph traversal handles this natively.",
+  },
+  {
+    title: "Cruise Itinerary Recommendations",
+    industry: "Travel / Hospitality",
+    icon: "\u{1F6A2}",
+    scenario: "A cruise line wants to recommend shore excursions based on what similar passengers enjoyed on past sailings, factoring in port, excursion type, and passenger preferences.",
+    howItWorks: [
+      "Passengers, sailings, ports, and excursions are nodes",
+      "Edges: SAILED_ON, BOOKED_EXCURSION, RATED (with score), DOCKED_AT",
+      "Query: 'Passengers who sailed similar itineraries and rated snorkeling 4+ also booked which excursions at this port?'",
+      "Traversal follows the relationship chain rather than joining flat tables",
+    ],
+    query: `MATCH (p:Passenger)-[:SAILED_ON]->(s:Sailing)-[:DOCKED_AT]->
+  (port:Port {name:'Cozumel'})
+MATCH (p)-[:BOOKED]->(e:Excursion)<-[:BOOKED]-(other:Passenger)
+WHERE p <> other
+RETURN e.name, avg(e.rating) AS avg_rating
+ORDER BY avg_rating DESC LIMIT 5`,
+    queryLang: "Cypher (Neo4j)",
+    whyNotSQL: "The recommendation path crosses 4+ entity types with variable depth. Graph databases let you express 'passengers like me \u2192 what they did \u2192 at this port' as a natural traversal.",
+  },
+  {
+    title: "Network Dependency Mapping",
+    industry: "Cloud Infrastructure",
+    icon: "\u{1F310}",
+    scenario: "An enterprise architect needs to understand blast radius \u2014 if a specific microservice goes down, which upstream applications and business processes are affected?",
+    howItWorks: [
+      "Services, databases, load balancers, and applications are nodes",
+      "Edges: DEPENDS_ON, READS_FROM, WRITES_TO, ROUTES_TO",
+      "Query: 'What is the full upstream dependency tree of the payment-service?'",
+      "Variable-depth traversal maps the entire blast radius in one query",
+    ],
+    query: `MATCH path = (app:Application)-[:DEPENDS_ON*1..5]->
+  (svc:Service {name:'payment-service'})
+RETURN app.name, length(path) AS hops,
+  [n IN nodes(path) | n.name] AS chain`,
+    queryLang: "Cypher (Neo4j)",
+    whyNotSQL: "Dependency chains have unknown depth. The *1..5 syntax handles variable-hop traversal that would require recursive CTEs in SQL \u2014 and graph databases are orders of magnitude faster at this.",
+  },
+];
+
+const vectorExamples = [
+  {
+    title: "Customer Support Knowledge Base",
+    industry: "SaaS / Technology",
+    icon: "\u{1F4AC}",
+    scenario: "A support chatbot needs to find the most relevant help article when a customer describes their problem in natural language, even if they don't use the exact terminology.",
+    howItWorks: [
+      "Each help article is chunked into paragraphs and embedded into 1536-dim vectors using an embedding model",
+      "Customer's question is embedded into the same vector space at query time",
+      "Cosine similarity search finds the closest article chunks \u2014 even if zero keywords match",
+      "Top chunks are passed to an LLM as context for a grounded answer (RAG)",
+    ],
+    query: `# Using Pinecone Python client
+query_embedding = openai.embeddings.create(
+    model="text-embedding-3-small",
+    input="My dashboard won't load after I changed my password"
+).data[0].embedding
+
+results = index.query(
+    vector=query_embedding,
+    top_k=5,
+    include_metadata=True
+)`,
+    queryLang: "Python (Pinecone + OpenAI)",
+    whyNotGraph: "There are no relationships to traverse \u2014 the task is pure semantic similarity. The customer's phrasing may share no keywords with the article. Vector search finds meaning-based matches that keyword search and graph traversal would both miss.",
+  },
+  {
+    title: "Product Visual Search",
+    industry: "E-Commerce / Retail",
+    icon: "\u{1F4F8}",
+    scenario: "A shopper uploads a photo of a handbag they saw on the street. The retailer needs to find visually similar products from their catalog of 500,000 items.",
+    howItWorks: [
+      "Every product image is run through a vision model (e.g., CLIP) to produce an embedding vector",
+      "The uploaded photo is embedded using the same model",
+      "Nearest-neighbor search in vector space returns the most visually similar products",
+      "Results ranked by vector distance \u2014 closest vectors = most similar appearance",
+    ],
+    query: `# Using Weaviate with CLIP embeddings
+result = client.query.get("Product", [
+    "name", "price", "image_url", "category"
+]).with_near_image({
+    "image": base64_encoded_photo
+}).with_limit(10).with_additional([
+    "distance"
+]).do()`,
+    queryLang: "Python (Weaviate)",
+    whyNotGraph: "Visual similarity is a geometric relationship in embedding space, not a structural graph relationship. No predefined edges exist between products \u2014 similarity is computed on the fly from the mathematical proximity of their vector representations.",
+  },
+  {
+    title: "Internal Document Search (RAG)",
+    industry: "Enterprise / Legal",
+    icon: "\u{1F4C4}",
+    scenario: "A law firm needs associates to quickly find relevant precedents, clauses, and memos across 200,000 documents using natural language questions rather than exact keyword searches.",
+    howItWorks: [
+      "All documents are chunked, embedded, and stored with metadata (date, author, case, document type)",
+      "An associate asks: 'What indemnification clauses have we used in maritime contracts since 2020?'",
+      "Vector search finds semantically relevant chunks, filtered by metadata (type=contract, industry=maritime, date>2020)",
+      "Retrieved chunks are fed to an LLM for synthesis into a summarized answer with citations",
+    ],
+    query: `results = collection.query(
+    query_texts=["indemnification clauses in
+        maritime contracts"],
+    n_results=10,
+    where={
+        "$and": [
+            {"doc_type": {"$eq": "contract"}},
+            {"industry": {"$eq": "maritime"}},
+            {"year": {"$gte": 2020}}
+        ]
+    }
+)`,
+    queryLang: "Python (ChromaDB)",
+    whyNotGraph: "The query is about semantic meaning ('what clauses are similar to this concept?'), not about traversing relationships between entities. Metadata filters narrow the scope, but the core retrieval is similarity-based.",
+  },
+];
+
+const bothExamples = [
+  {
+    title: "GraphRAG for Research Analysis",
+    icon: "\u{1F52C}",
+    scenario: "A pharmaceutical company needs to answer complex research questions like 'What drug interactions have been observed between SSRIs and blood thinners in patients over 65?'",
+    vectorRole: "Vector search retrieves the most semantically relevant research paper chunks and clinical trial summaries from a corpus of 50,000 documents.",
+    graphRole: "A knowledge graph connects drugs \u2192 mechanisms \u2192 interactions \u2192 patient populations \u2192 outcomes. After vector retrieval, graph traversal enriches the context with structured relationship data the LLM can reason over.",
+    insight: "Vector finds what's relevant. Graph explains how things connect. Together, the LLM gets both the source material and the structured relationships to synthesize a comprehensive answer.",
+  },
+  {
+    title: "E-Commerce Personalization",
+    icon: "\u{1F6D2}",
+    scenario: "An online retailer wants to show 'You might also like...' recommendations that combine purchase history relationships with visual/semantic product similarity.",
+    vectorRole: "When a customer views a product, vector similarity finds items that look similar or have similar descriptions \u2014 discovering products the customer never explicitly interacted with.",
+    graphRole: "The purchase graph captures 'customers who bought X also bought Y' patterns, loyalty tiers, brand affinities, and cross-category paths. Graph traversal surfaces relationship-driven recommendations.",
+    insight: "Graph handles the 'people like you bought this' signal. Vector handles the 'this looks/feels like what you're browsing' signal. Blending both produces more diverse, accurate recommendations than either alone.",
+  },
+];
+
+function CodeBlock({ code, lang }) {
+  return (
+    <div style={{ background: "#1a1a2e", borderRadius: 8, padding: "14px 18px", marginTop: 10, fontFamily: "'JetBrains Mono', 'Fira Code', 'Courier New', monospace", fontSize: 12.5, lineHeight: 1.6, color: "#e0e0e0", overflowX: "auto", position: "relative" }}>
+      <div style={{ position: "absolute", top: 8, right: 12, fontSize: 10, color: "#6a6a8a", fontFamily: "'DM Sans', sans-serif", letterSpacing: 0.5, textTransform: "uppercase" }}>{lang}</div>
+      <pre>{code}</pre>
+    </div>
+  );
+}
+
+function ExampleCard({ example, type }) {
+  const [expanded, setExpanded] = useState(false);
+  const accentColor = type === "graph" ? "#2dd4bf" : "#a78bfa";
+  const bgTint = type === "graph" ? "rgba(45,212,191,0.04)" : "rgba(167,139,250,0.04)";
+
+  return (
+    <div style={{ background: bgTint, border: `1px solid ${type === "graph" ? "rgba(45,212,191,0.15)" : "rgba(167,139,250,0.15)"}`, borderRadius: 12, padding: "22px 24px", marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 14 }}>
+        <div style={{ fontSize: 28, lineHeight: 1 }}>{example.icon}</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+            <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: "#e8e8e8", fontFamily: "'DM Sans', sans-serif" }}>{example.title}</h3>
+            {example.industry && (
+              <span style={{ fontSize: 11, color: accentColor, background: `${accentColor}15`, padding: "3px 10px", borderRadius: 20, fontWeight: 600, letterSpacing: 0.3, fontFamily: "'DM Sans', sans-serif" }}>{example.industry}</span>
+            )}
+          </div>
+          <p style={{ margin: "10px 0 0", fontSize: 14, lineHeight: 1.65, color: "#a0a0b0", fontFamily: "'DM Sans', sans-serif" }}>{example.scenario}</p>
+          <button onClick={() => setExpanded(!expanded)} style={{ marginTop: 12, background: "none", border: `1px solid ${accentColor}40`, color: accentColor, padding: "6px 16px", borderRadius: 6, fontSize: 13, fontWeight: 600, fontFamily: "'DM Sans', sans-serif" }}>
+            {expanded ? "Collapse \u25B2" : "Show Details \u25BC"}
+          </button>
+        </div>
+      </div>
+      {expanded && (
+        <div style={{ marginTop: 18, paddingTop: 18, borderTop: `1px solid ${accentColor}15` }}>
+          <div style={{ marginBottom: 16 }}>
+            <h4 style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: accentColor, textTransform: "uppercase", letterSpacing: 1, fontFamily: "'DM Sans', sans-serif" }}>How It Works</h4>
+            {example.howItWorks.map((step, i) => (
+              <div key={i} style={{ display: "flex", gap: 10, marginBottom: 8, fontSize: 13.5, lineHeight: 1.6, color: "#a0a0b0", fontFamily: "'DM Sans', sans-serif" }}>
+                <span style={{ color: accentColor, fontWeight: 700, minWidth: 18, fontFamily: "'JetBrains Mono', monospace", fontSize: 12, marginTop: 2 }}>{String(i + 1).padStart(2, "0")}</span>
+                <span>{step}</span>
+              </div>
+            ))}
+          </div>
+          <CodeBlock code={example.query} lang={example.queryLang} />
+          <div style={{ marginTop: 16, padding: "12px 16px", background: `${accentColor}08`, borderLeft: `3px solid ${accentColor}`, borderRadius: "0 6px 6px 0", fontSize: 13, lineHeight: 1.6, color: "#a0a0b0", fontFamily: "'DM Sans', sans-serif" }}>
+            <strong style={{ color: "#e8e8e8" }}>Why not {type === "graph" ? "SQL" : "a graph database"}?</strong>{" "}
+            {type === "graph" ? example.whyNotSQL : example.whyNotGraph}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CombinedCard({ example }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div style={{ background: "linear-gradient(135deg, rgba(45,212,191,0.04), rgba(167,139,250,0.04))", border: "1px solid rgba(120,120,180,0.15)", borderRadius: 12, padding: "22px 24px", marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 14 }}>
+        <div style={{ fontSize: 28, lineHeight: 1 }}>{example.icon}</div>
+        <div style={{ flex: 1 }}>
+          <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: "#e8e8e8", fontFamily: "'DM Sans', sans-serif" }}>{example.title}</h3>
+          <p style={{ margin: "10px 0 0", fontSize: 14, lineHeight: 1.65, color: "#a0a0b0", fontFamily: "'DM Sans', sans-serif" }}>{example.scenario}</p>
+          <button onClick={() => setExpanded(!expanded)} style={{ marginTop: 12, background: "none", border: "1px solid rgba(120,120,180,0.3)", color: "#9090c0", padding: "6px 16px", borderRadius: 6, fontSize: 13, fontWeight: 600, fontFamily: "'DM Sans', sans-serif" }}>
+            {expanded ? "Collapse \u25B2" : "Show Details \u25BC"}
+          </button>
+        </div>
+      </div>
+      {expanded && (
+        <div style={{ marginTop: 18, paddingTop: 18, borderTop: "1px solid rgba(120,120,180,0.1)" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+            <div style={{ padding: "14px 16px", background: "rgba(45,212,191,0.06)", borderRadius: 8, borderLeft: "3px solid #2dd4bf" }}>
+              <h4 style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 700, color: "#2dd4bf", textTransform: "uppercase", letterSpacing: 1, fontFamily: "'DM Sans', sans-serif" }}>Graph Role</h4>
+              <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: "#a0a0b0", fontFamily: "'DM Sans', sans-serif" }}>{example.graphRole}</p>
+            </div>
+            <div style={{ padding: "14px 16px", background: "rgba(167,139,250,0.06)", borderRadius: 8, borderLeft: "3px solid #a78bfa" }}>
+              <h4 style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 700, color: "#a78bfa", textTransform: "uppercase", letterSpacing: 1, fontFamily: "'DM Sans', sans-serif" }}>Vector Role</h4>
+              <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: "#a0a0b0", fontFamily: "'DM Sans', sans-serif" }}>{example.vectorRole}</p>
+            </div>
+          </div>
+          <div style={{ padding: "12px 16px", background: "rgba(120,120,180,0.06)", borderRadius: 8, fontSize: 13.5, lineHeight: 1.65, color: "#a0a0b0", fontFamily: "'DM Sans', sans-serif" }}>
+            <strong style={{ color: "#e8e8e8" }}>Key Insight: </strong>{example.insight}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function App() {
+  const [activeTab, setActiveTab] = useState("graph");
+  const tabs = [
+    { id: "graph", label: "Graph DB", color: "#2dd4bf" },
+    { id: "vector", label: "Vector DB", color: "#a78bfa" },
+    { id: "both", label: "Both Together", color: "#9090c0" },
+  ];
+
+  return (
+    <div style={{ minHeight: "100vh", padding: "36px 28px", maxWidth: 800, margin: "0 auto" }}>
+      <div style={{ marginBottom: 32 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+          <div style={{ width: 36, height: 4, background: "linear-gradient(90deg, #2dd4bf, #a78bfa)", borderRadius: 2 }} />
+          <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#6a6a8a" }}>Database Comparison</span>
+        </div>
+        <h1 style={{ margin: "12px 0 0", fontSize: 30, fontWeight: 700, lineHeight: 1.2, background: "linear-gradient(135deg, #2dd4bf, #a78bfa)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Graph vs. Vector Databases</h1>
+        <p style={{ margin: "12px 0 0", fontSize: 15, color: "#6a6a8a", lineHeight: 1.6, maxWidth: 600 }}>Practical, industry-grounded examples showing when to use each technology \u2014 and when you need both.</p>
+        <p style={{ margin: "6px 0 0", fontSize: 12, color: "#4a4a6a" }}>CGS 2263 \u2014 Database Concepts &amp; Design \u2014 Miami Dade College \u2014 Spring 2026</p>
+        <div style={{ display: "flex", gap: 20, marginTop: 28, padding: "6px 8px", background: "rgba(255,255,255,0.03)", borderRadius: 10, width: "fit-content" }}>
+          {tabs.map((tab) => (
+            <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{ background: activeTab === tab.id ? `${tab.color}18` : "transparent", border: activeTab === tab.id ? `1px solid ${tab.color}30` : "1px solid transparent", color: activeTab === tab.id ? tab.color : "#6a6a8a", padding: "8px 22px", borderRadius: 7, fontSize: 14, fontWeight: 600, fontFamily: "'DM Sans', sans-serif", letterSpacing: 0.2 }}>
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div style={{ marginBottom: 20 }}>
+        {activeTab === "graph" && (
+          <>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18, padding: "10px 16px", background: "rgba(45,212,191,0.06)", borderRadius: 8, fontSize: 13.5, color: "#2dd4bf", lineHeight: 1.5 }}>
+              <span style={{ fontSize: 18 }}>{"\u2194"}</span>
+              <span><strong>Core question:</strong> "What is <em>connected</em> to this?" \u2014 traversing explicit relationships between entities</span>
+            </div>
+            {graphExamples.map((ex, i) => <ExampleCard key={i} example={ex} type="graph" />)}
+          </>
+        )}
+        {activeTab === "vector" && (
+          <>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18, padding: "10px 16px", background: "rgba(167,139,250,0.06)", borderRadius: 8, fontSize: 13.5, color: "#a78bfa", lineHeight: 1.5 }}>
+              <span style={{ fontSize: 18 }}>{"\u2248"}</span>
+              <span><strong>Core question:</strong> "What is <em>similar</em> to this?" \u2014 finding semantic or visual proximity in embedding space</span>
+            </div>
+            {vectorExamples.map((ex, i) => <ExampleCard key={i} example={ex} type="vector" />)}
+          </>
+        )}
+        {activeTab === "both" && (
+          <>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18, padding: "10px 16px", background: "rgba(120,120,180,0.06)", borderRadius: 8, fontSize: 13.5, color: "#9090c0", lineHeight: 1.5 }}>
+              <span style={{ fontSize: 18 }}>{"\u26A1"}</span>
+              <span><strong>Combined power:</strong> Vector finds what's <em>relevant</em>, graph explains how things <em>relate</em> \u2014 together they give AI systems richer context</span>
+            </div>
+            {bothExamples.map((ex, i) => <CombinedCard key={i} example={ex} />)}
+          </>
+        )}
+      </div>
+      <div style={{ marginTop: 28, padding: "18px 22px", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 10, fontSize: 13, lineHeight: 1.7, color: "#6a6a8a" }}>
+        <strong style={{ color: "#b0b0c0" }}>Decision heuristic for students:</strong>{" "}
+        If your query starts with "find things related to..." or "who is connected to..." \u2192 graph database.
+        If your query starts with "find things similar to..." or "what matches this meaning..." \u2192 vector database.
+        If you need both structured relationships AND semantic search \u2192 use them together (GraphRAG pattern).
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
