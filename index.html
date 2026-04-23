@@ -26,6 +26,7 @@
 <script type="text/babel">
 const { useState } = React;
 
+/* ───────────────────── GRAPH EXAMPLES ───────────────────── */
 const graphExamples = [
   {
     title: "Fraud Detection Ring",
@@ -38,10 +39,40 @@ const graphExamples = [
       "Traversal query: 'Find all accounts within 3 hops of this flagged account that share a device or address'",
       "Pattern matching reveals fraud rings invisible to row-by-row SQL analysis",
     ],
-    query: `MATCH (flagged:Account {status:'flagged'})-[:USES_DEVICE]->
-  (d:Device)<-[:USES_DEVICE]-(other:Account)
-WHERE other <> flagged
-RETURN other.id, d.fingerprint, count(*) AS shared`,
+    schema: {
+      nodes: [
+        { label: "Customer", color: "#2dd4bf", props: ["customer_id", "name", "ssn_hash", "risk_score"] },
+        { label: "Account", color: "#60a5fa", props: ["account_id", "type", "status", "opened_date"] },
+        { label: "Device", color: "#f472b6", props: ["device_id", "fingerprint", "os", "last_seen"] },
+        { label: "Address", color: "#fbbf24", props: ["address_id", "street", "city", "zip"] },
+      ],
+      edges: [
+        { from: "Customer", to: "Account", label: "OWNS_ACCOUNT" },
+        { from: "Customer", to: "Device", label: "USES_DEVICE" },
+        { from: "Customer", to: "Address", label: "LIVES_AT" },
+      ],
+    },
+    sampleData: {
+      description: "Three customers share the same device — a pattern invisible in flat tables but immediately obvious in a graph:",
+      nodes: [
+        { type: "Customer", data: { customer_id: "C-1001", name: "Alice Moreno", risk_score: 12 } },
+        { type: "Customer", data: { customer_id: "C-1002", name: "Bob Tran", risk_score: 8 } },
+        { type: "Customer", data: { customer_id: "C-1003", name: "Carol Smith", risk_score: 45 } },
+        { type: "Device", data: { device_id: "D-8811", fingerprint: "a7f3...c912", os: "Android 14" } },
+        { type: "Account", data: { account_id: "A-5501", type: "checking", status: "flagged" } },
+        { type: "Account", data: { account_id: "A-5502", type: "savings", status: "active" } },
+        { type: "Account", data: { account_id: "A-5503", type: "checking", status: "active" } },
+      ],
+      edges: [
+        "C-1001 —OWNS_ACCOUNT→ A-5501",
+        "C-1002 —OWNS_ACCOUNT→ A-5502",
+        "C-1003 —OWNS_ACCOUNT→ A-5503",
+        "C-1001 —USES_DEVICE→ D-8811",
+        "C-1002 —USES_DEVICE→ D-8811",
+        "C-1003 —USES_DEVICE→ D-8811  ← all three share one device",
+      ],
+    },
+    query: `MATCH (flagged:Account {status:'flagged'})-[:USES_DEVICE]->\n  (d:Device)<-[:USES_DEVICE]-(other:Account)\nWHERE other <> flagged\nRETURN other.id, d.fingerprint, count(*) AS shared`,
     queryLang: "Cypher (Neo4j)",
     whyNotSQL: "Detecting rings requires recursive multi-hop joins across several entity types. In SQL, you'd need multiple self-joins with unknown depth — graph traversal handles this natively.",
   },
@@ -56,12 +87,39 @@ RETURN other.id, d.fingerprint, count(*) AS shared`,
       "Query: 'Passengers who sailed similar itineraries and rated snorkeling 4+ also booked which excursions at this port?'",
       "Traversal follows the relationship chain rather than joining flat tables",
     ],
-    query: `MATCH (p:Passenger)-[:SAILED_ON]->(s:Sailing)-[:DOCKED_AT]->
-  (port:Port {name:'Cozumel'})
-MATCH (p)-[:BOOKED]->(e:Excursion)<-[:BOOKED]-(other:Passenger)
-WHERE p <> other
-RETURN e.name, avg(e.rating) AS avg_rating
-ORDER BY avg_rating DESC LIMIT 5`,
+    schema: {
+      nodes: [
+        { label: "Passenger", color: "#2dd4bf", props: ["passenger_id", "name", "loyalty_tier", "home_port"] },
+        { label: "Sailing", color: "#60a5fa", props: ["sailing_id", "ship_name", "depart_date", "nights"] },
+        { label: "Port", color: "#fbbf24", props: ["port_id", "name", "country", "region"] },
+        { label: "Excursion", color: "#f472b6", props: ["excursion_id", "name", "type", "price"] },
+      ],
+      edges: [
+        { from: "Passenger", to: "Sailing", label: "SAILED_ON" },
+        { from: "Sailing", to: "Port", label: "DOCKED_AT" },
+        { from: "Passenger", to: "Excursion", label: "BOOKED {rating: int}" },
+      ],
+    },
+    sampleData: {
+      description: "Two passengers sailed the same itinerary — traversal reveals what excursions to recommend at Cozumel:",
+      nodes: [
+        { type: "Passenger", data: { passenger_id: "P-201", name: "Maria Torres", loyalty_tier: "Platinum" } },
+        { type: "Passenger", data: { passenger_id: "P-202", name: "James Chen", loyalty_tier: "Gold" } },
+        { type: "Sailing", data: { sailing_id: "S-7700", ship_name: "Harmony", depart_date: "2026-01-12" } },
+        { type: "Port", data: { port_id: "CZM", name: "Cozumel", country: "Mexico" } },
+        { type: "Excursion", data: { excursion_id: "E-40", name: "Reef Snorkeling", type: "water" } },
+        { type: "Excursion", data: { excursion_id: "E-41", name: "Mayan Ruins Tour", type: "cultural" } },
+      ],
+      edges: [
+        "P-201 —SAILED_ON→ S-7700",
+        "P-202 —SAILED_ON→ S-7700",
+        "S-7700 —DOCKED_AT→ CZM",
+        "P-201 —BOOKED {rating:5}→ E-40",
+        "P-201 —BOOKED {rating:4}→ E-41",
+        "P-202 —BOOKED {rating:5}→ E-40  ← recommend E-41 to P-202",
+      ],
+    },
+    query: `MATCH (p:Passenger)-[:SAILED_ON]->(s:Sailing)-[:DOCKED_AT]->\n  (port:Port {name:'Cozumel'})\nMATCH (p)-[:BOOKED]->(e:Excursion)<-[:BOOKED]-(other:Passenger)\nWHERE p <> other\nRETURN e.name, avg(e.rating) AS avg_rating\nORDER BY avg_rating DESC LIMIT 5`,
     queryLang: "Cypher (Neo4j)",
     whyNotSQL: "The recommendation path crosses 4+ entity types with variable depth. Graph databases let you express 'passengers like me → what they did → at this port' as a natural traversal.",
   },
@@ -76,15 +134,43 @@ ORDER BY avg_rating DESC LIMIT 5`,
       "Query: 'What is the full upstream dependency tree of the payment-service?'",
       "Variable-depth traversal maps the entire blast radius in one query",
     ],
-    query: `MATCH path = (app:Application)-[:DEPENDS_ON*1..5]->
-  (svc:Service {name:'payment-service'})
-RETURN app.name, length(path) AS hops,
-  [n IN nodes(path) | n.name] AS chain`,
+    schema: {
+      nodes: [
+        { label: "Application", color: "#2dd4bf", props: ["app_id", "name", "owner_team", "tier"] },
+        { label: "Service", color: "#60a5fa", props: ["service_id", "name", "version", "runtime"] },
+        { label: "Database", color: "#fbbf24", props: ["db_id", "engine", "cluster", "region"] },
+        { label: "LoadBalancer", color: "#f472b6", props: ["lb_id", "type", "dns_name"] },
+      ],
+      edges: [
+        { from: "Application", to: "Service", label: "DEPENDS_ON" },
+        { from: "Service", to: "Service", label: "DEPENDS_ON" },
+        { from: "Service", to: "Database", label: "READS_FROM / WRITES_TO" },
+        { from: "LoadBalancer", to: "Service", label: "ROUTES_TO" },
+      ],
+    },
+    sampleData: {
+      description: "A dependency chain 3 hops deep — payment-service going down cascades up to the booking app:",
+      nodes: [
+        { type: "Application", data: { app_id: "APP-01", name: "booking-web", tier: "Tier-0" } },
+        { type: "Service", data: { service_id: "SVC-10", name: "checkout-svc", version: "3.2.1" } },
+        { type: "Service", data: { service_id: "SVC-11", name: "payment-svc", version: "2.8.0" } },
+        { type: "Service", data: { service_id: "SVC-12", name: "fraud-check", version: "1.4.2" } },
+        { type: "Database", data: { db_id: "DB-50", engine: "PostgreSQL 16", cluster: "pay-prod" } },
+      ],
+      edges: [
+        "APP-01 —DEPENDS_ON→ SVC-10",
+        "SVC-10 —DEPENDS_ON→ SVC-11",
+        "SVC-11 —DEPENDS_ON→ SVC-12",
+        "SVC-11 —READS_FROM→ DB-50  ← 3-hop blast radius",
+      ],
+    },
+    query: `MATCH path = (app:Application)-[:DEPENDS_ON*1..5]->\n  (svc:Service {name:'payment-service'})\nRETURN app.name, length(path) AS hops,\n  [n IN nodes(path) | n.name] AS chain`,
     queryLang: "Cypher (Neo4j)",
     whyNotSQL: "Dependency chains have unknown depth. The *1..5 syntax handles variable-hop traversal that would require recursive CTEs in SQL — and graph databases are orders of magnitude faster at this.",
   },
 ];
 
+/* ───────────────────── VECTOR EXAMPLES ───────────────────── */
 const vectorExamples = [
   {
     title: "Customer Support Knowledge Base",
@@ -97,17 +183,47 @@ const vectorExamples = [
       "Cosine similarity search finds the closest article chunks — even if zero keywords match",
       "Top chunks are passed to an LLM as context for a grounded answer (RAG)",
     ],
-    query: `# Using Pinecone Python client
-query_embedding = openai.embeddings.create(
-    model="text-embedding-3-small",
-    input="My dashboard won't load after I changed my password"
-).data[0].embedding
-
-results = index.query(
-    vector=query_embedding,
-    top_k=5,
-    include_metadata=True
-)`,
+    schema: {
+      collectionName: "support_articles",
+      fields: [
+        { name: "id", type: "string", desc: "Unique chunk identifier" },
+        { name: "article_title", type: "string", desc: "Source article title" },
+        { name: "chunk_text", type: "text", desc: "Paragraph of article content" },
+        { name: "category", type: "string", desc: "Filterable metadata" },
+        { name: "last_updated", type: "date", desc: "Freshness metadata" },
+        { name: "embedding", type: "float[1536]", desc: "Vector from embedding model", isVector: true },
+      ],
+    },
+    sampleData: {
+      description: "The customer asks 'My dashboard won't load after I changed my password' — no keyword overlap with the matching article, but vectors are close:",
+      records: [
+        {
+          id: "chunk-4821",
+          article_title: "Troubleshooting Authentication Errors",
+          chunk_text: "After updating credentials, cached tokens may become invalid. Clear your browser cache and re-authenticate...",
+          category: "auth",
+          embedding: "[0.021, -0.118, 0.042, ... 1,533 more ... 0.087]",
+          similarity: "0.94",
+        },
+        {
+          id: "chunk-2217",
+          article_title: "Session Timeout Configuration",
+          chunk_text: "If your session expires, you will be redirected to the login page. Administrators can adjust timeout...",
+          category: "admin",
+          embedding: "[0.019, -0.095, 0.038, ... 1,533 more ... 0.062]",
+          similarity: "0.87",
+        },
+        {
+          id: "chunk-1190",
+          article_title: "Browser Compatibility Guide",
+          chunk_text: "Some features require WebSocket support. If pages fail to render, check your browser version...",
+          category: "setup",
+          embedding: "[-0.004, -0.071, 0.105, ... 1,533 more ... 0.029]",
+          similarity: "0.81",
+        },
+      ],
+    },
+    query: `# Using Pinecone Python client\nquery_embedding = openai.embeddings.create(\n    model="text-embedding-3-small",\n    input="My dashboard won't load after I changed my password"\n).data[0].embedding\n\nresults = index.query(\n    vector=query_embedding,\n    top_k=5,\n    include_metadata=True\n)`,
     queryLang: "Python (Pinecone + OpenAI)",
     whyNotGraph: "There are no relationships to traverse — the task is pure semantic similarity. The customer's phrasing may share no keywords with the article. Vector search finds meaning-based matches that keyword search and graph traversal would both miss.",
   },
@@ -122,14 +238,47 @@ results = index.query(
       "Nearest-neighbor search in vector space returns the most visually similar products",
       "Results ranked by vector distance — closest vectors = most similar appearance",
     ],
-    query: `# Using Weaviate with CLIP embeddings
-result = client.query.get("Product", [
-    "name", "price", "image_url", "category"
-]).with_near_image({
-    "image": base64_encoded_photo
-}).with_limit(10).with_additional([
-    "distance"
-]).do()`,
+    schema: {
+      collectionName: "product_catalog",
+      fields: [
+        { name: "product_id", type: "string", desc: "SKU / product identifier" },
+        { name: "name", type: "string", desc: "Product display name" },
+        { name: "category", type: "string", desc: "Product category for filtering" },
+        { name: "price", type: "float", desc: "Current price in USD" },
+        { name: "image_url", type: "string", desc: "CDN link to product image" },
+        { name: "image_embedding", type: "float[512]", desc: "CLIP vector of product image", isVector: true },
+      ],
+    },
+    sampleData: {
+      description: "Shopper uploads a photo of a tan leather crossbody bag — vector search returns visually similar items ranked by distance:",
+      records: [
+        {
+          product_id: "SKU-88412",
+          name: "Classic Leather Crossbody — Camel",
+          category: "handbags",
+          price: "$128.00",
+          image_embedding: "[0.312, -0.045, 0.198, ... 509 more ... 0.067]",
+          similarity: "0.96  ← almost identical style",
+        },
+        {
+          product_id: "SKU-77203",
+          name: "Vegan Leather Saddle Bag — Tan",
+          category: "handbags",
+          price: "$89.00",
+          image_embedding: "[0.298, -0.051, 0.185, ... 509 more ... 0.071]",
+          similarity: "0.91",
+        },
+        {
+          product_id: "SKU-61190",
+          name: "Woven Straw Crossbody — Natural",
+          category: "handbags",
+          price: "$64.00",
+          image_embedding: "[0.210, -0.012, 0.142, ... 509 more ... 0.093]",
+          similarity: "0.78  ← similar shape, different material",
+        },
+      ],
+    },
+    query: `# Using Weaviate with CLIP embeddings\nresult = client.query.get("Product", [\n    "name", "price", "image_url", "category"\n]).with_near_image({\n    "image": base64_encoded_photo\n}).with_limit(10).with_additional([\n    "distance"\n]).do()`,
     queryLang: "Python (Weaviate)",
     whyNotGraph: "Visual similarity is a geometric relationship in embedding space, not a structural graph relationship. No predefined edges exist between products — similarity is computed on the fly from the mathematical proximity of their vector representations.",
   },
@@ -144,23 +293,58 @@ result = client.query.get("Product", [
       "Vector search finds semantically relevant chunks, filtered by metadata (type=contract, industry=maritime, date>2020)",
       "Retrieved chunks are fed to an LLM for synthesis into a summarized answer with citations",
     ],
-    query: `results = collection.query(
-    query_texts=["indemnification clauses in
-        maritime contracts"],
-    n_results=10,
-    where={
-        "$and": [
-            {"doc_type": {"$eq": "contract"}},
-            {"industry": {"$eq": "maritime"}},
-            {"year": {"$gte": 2020}}
-        ]
-    }
-)`,
+    schema: {
+      collectionName: "legal_documents",
+      fields: [
+        { name: "chunk_id", type: "string", desc: "Unique chunk identifier" },
+        { name: "doc_title", type: "string", desc: "Source document title" },
+        { name: "doc_type", type: "string", desc: "contract | memo | brief | opinion" },
+        { name: "industry", type: "string", desc: "Client industry classification" },
+        { name: "author", type: "string", desc: "Attorney who drafted the document" },
+        { name: "year", type: "int", desc: "Year filed/signed — used for range filters" },
+        { name: "chunk_text", type: "text", desc: "Paragraph from the document" },
+        { name: "embedding", type: "float[1536]", desc: "Semantic vector of chunk text", isVector: true },
+      ],
+    },
+    sampleData: {
+      description: "Query: 'indemnification clauses in maritime contracts since 2020' — metadata filters narrow scope, vectors find semantic matches:",
+      records: [
+        {
+          chunk_id: "lgl-90421",
+          doc_title: "MV Oceanic Charter Agreement",
+          doc_type: "contract",
+          industry: "maritime",
+          year: "2023",
+          chunk_text: "The Charterer shall hold harmless and defend the Owner against all claims arising from cargo operations...",
+          similarity: "0.93",
+        },
+        {
+          chunk_id: "lgl-87712",
+          doc_title: "Port Services Master Agreement",
+          doc_type: "contract",
+          industry: "maritime",
+          year: "2021",
+          chunk_text: "Each party agrees to indemnify the other for losses resulting from negligent acts of its employees...",
+          similarity: "0.90",
+        },
+        {
+          chunk_id: "lgl-81005",
+          doc_title: "Vessel Maintenance SLA",
+          doc_type: "contract",
+          industry: "maritime",
+          year: "2022",
+          chunk_text: "Contractor assumes all liability for damage to hull or machinery during dry-dock services...",
+          similarity: "0.84",
+        },
+      ],
+    },
+    query: `results = collection.query(\n    query_texts=["indemnification clauses in\n        maritime contracts"],\n    n_results=10,\n    where={\n        "$and": [\n            {"doc_type": {"$eq": "contract"}},\n            {"industry": {"$eq": "maritime"}},\n            {"year": {"$gte": 2020}}\n        ]\n    }\n)`,
     queryLang: "Python (ChromaDB)",
     whyNotGraph: "The query is about semantic meaning ('what clauses are similar to this concept?'), not about traversing relationships between entities. Metadata filters narrow the scope, but the core retrieval is similarity-based.",
   },
 ];
 
+/* ───────────────────── BOTH TOGETHER ───────────────────── */
 const bothExamples = [
   {
     title: "GraphRAG for Research Analysis",
@@ -169,6 +353,30 @@ const bothExamples = [
     vectorRole: "Vector search retrieves the most semantically relevant research paper chunks and clinical trial summaries from a corpus of 50,000 documents.",
     graphRole: "A knowledge graph connects drugs → mechanisms → interactions → patient populations → outcomes. After vector retrieval, graph traversal enriches the context with structured relationship data the LLM can reason over.",
     insight: "Vector finds what's relevant. Graph explains how things connect. Together, the LLM gets both the source material and the structured relationships to synthesize a comprehensive answer.",
+    vectorSchema: {
+      collectionName: "research_papers",
+      fields: [
+        { name: "chunk_id", type: "string" },
+        { name: "paper_title", type: "string" },
+        { name: "journal", type: "string" },
+        { name: "year", type: "int" },
+        { name: "chunk_text", type: "text" },
+        { name: "embedding", type: "float[1536]", isVector: true },
+      ],
+    },
+    graphSchema: {
+      nodes: [
+        { label: "Drug", color: "#2dd4bf", props: ["name", "class", "fda_status"] },
+        { label: "Mechanism", color: "#60a5fa", props: ["name", "pathway"] },
+        { label: "Interaction", color: "#f472b6", props: ["severity", "evidence_level"] },
+        { label: "Population", color: "#fbbf24", props: ["age_range", "conditions"] },
+      ],
+      edges: [
+        { from: "Drug", to: "Mechanism", label: "ACTS_VIA" },
+        { from: "Drug", to: "Interaction", label: "INVOLVED_IN" },
+        { from: "Interaction", to: "Population", label: "OBSERVED_IN" },
+      ],
+    },
   },
   {
     title: "E-Commerce Personalization",
@@ -177,21 +385,165 @@ const bothExamples = [
     vectorRole: "When a customer views a product, vector similarity finds items that look similar or have similar descriptions — discovering products the customer never explicitly interacted with.",
     graphRole: "The purchase graph captures 'customers who bought X also bought Y' patterns, loyalty tiers, brand affinities, and cross-category paths. Graph traversal surfaces relationship-driven recommendations.",
     insight: "Graph handles the 'people like you bought this' signal. Vector handles the 'this looks/feels like what you're browsing' signal. Blending both produces more diverse, accurate recommendations than either alone.",
+    vectorSchema: {
+      collectionName: "product_embeddings",
+      fields: [
+        { name: "product_id", type: "string" },
+        { name: "name", type: "string" },
+        { name: "desc_embedding", type: "float[768]", isVector: true },
+        { name: "img_embedding", type: "float[512]", isVector: true },
+      ],
+    },
+    graphSchema: {
+      nodes: [
+        { label: "Customer", color: "#2dd4bf", props: ["id", "name", "segment"] },
+        { label: "Product", color: "#60a5fa", props: ["id", "name", "category"] },
+        { label: "Brand", color: "#fbbf24", props: ["name", "tier"] },
+      ],
+      edges: [
+        { from: "Customer", to: "Product", label: "PURCHASED" },
+        { from: "Customer", to: "Product", label: "VIEWED" },
+        { from: "Product", to: "Brand", label: "MADE_BY" },
+      ],
+    },
   },
 ];
 
+
+/* ═══════════════════ COMPONENTS ═══════════════════ */
+
+const mono = "'JetBrains Mono', 'Fira Code', 'Courier New', monospace";
+const sans = "'DM Sans', sans-serif";
+
 function CodeBlock({ code, lang }) {
   return (
-    <div style={{ background: "#1a1a2e", borderRadius: 8, padding: "14px 18px", marginTop: 10, fontFamily: "'JetBrains Mono', 'Fira Code', 'Courier New', monospace", fontSize: 12.5, lineHeight: 1.6, color: "#e0e0e0", overflowX: "auto", position: "relative" }}>
-      <div style={{ position: "absolute", top: 8, right: 12, fontSize: 10, color: "#6a6a8a", fontFamily: "'DM Sans', sans-serif", letterSpacing: 0.5, textTransform: "uppercase" }}>{lang}</div>
+    <div style={{ background: "#1a1a2e", borderRadius: 8, padding: "14px 18px", marginTop: 10, fontFamily: mono, fontSize: 12.5, lineHeight: 1.6, color: "#e0e0e0", overflowX: "auto", position: "relative" }}>
+      <div style={{ position: "absolute", top: 8, right: 12, fontSize: 10, color: "#6a6a8a", fontFamily: sans, letterSpacing: 0.5, textTransform: "uppercase" }}>{lang}</div>
       <pre>{code}</pre>
     </div>
   );
 }
 
+/* ── Graph Schema Diagram ── */
+function GraphSchemaViz({ schema, accent }) {
+  return (
+    <div style={{ marginTop: 16 }}>
+      <h4 style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 700, color: accent, textTransform: "uppercase", letterSpacing: 1, fontFamily: sans }}>Schema — Node Labels &amp; Relationships</h4>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+        {schema.nodes.map((n, i) => (
+          <div key={i} style={{ background: `${n.color}12`, border: `1px solid ${n.color}30`, borderRadius: 8, padding: "10px 14px", minWidth: 150, flex: "1 1 150px" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: n.color, fontFamily: sans, marginBottom: 6 }}>:{n.label}</div>
+            {n.props.map((p, j) => (
+              <div key={j} style={{ fontSize: 11.5, color: "#a0a0b0", fontFamily: mono, lineHeight: 1.7 }}>{p}</div>
+            ))}
+          </div>
+        ))}
+      </div>
+      <div style={{ background: "#13131f", borderRadius: 8, padding: "12px 16px" }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#6a6a8a", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8, fontFamily: sans }}>Relationships (Edges)</div>
+        {schema.edges.map((e, i) => (
+          <div key={i} style={{ fontSize: 12.5, fontFamily: mono, color: "#a0a0b0", lineHeight: 1.8 }}>
+            <span style={{ color: "#60a5fa" }}>(:{e.from})</span>
+            <span style={{ color: "#6a6a8a" }}> —</span>
+            <span style={{ color: "#fbbf24" }}>[:{e.label}]</span>
+            <span style={{ color: "#6a6a8a" }}>→ </span>
+            <span style={{ color: "#60a5fa" }}>(:{e.to})</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ── Graph Sample Data ── */
+function GraphSampleData({ data, accent }) {
+  const colors = { Customer: "#2dd4bf", Passenger: "#2dd4bf", Application: "#2dd4bf", Account: "#60a5fa", Sailing: "#60a5fa", Service: "#60a5fa", Device: "#f472b6", Excursion: "#f472b6", LoadBalancer: "#f472b6", Address: "#fbbf24", Port: "#fbbf24", Database: "#fbbf24" };
+  return (
+    <div style={{ marginTop: 16 }}>
+      <h4 style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 700, color: accent, textTransform: "uppercase", letterSpacing: 1, fontFamily: sans }}>Sample Data</h4>
+      <p style={{ fontSize: 12.5, color: "#8080a0", lineHeight: 1.6, fontFamily: sans, marginBottom: 12 }}>{data.description}</p>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+        {data.nodes.map((n, i) => {
+          const c = colors[n.type] || "#60a5fa";
+          return (
+            <div key={i} style={{ background: `${c}08`, border: `1px solid ${c}20`, borderRadius: 6, padding: "6px 10px", fontSize: 11, fontFamily: mono, color: "#a0a0b0", lineHeight: 1.6 }}>
+              <span style={{ color: c, fontWeight: 700 }}>{n.type}</span>{" "}
+              {Object.entries(n.data).map(([k, v], j) => (
+                <span key={j}>{k}:<span style={{ color: "#e0e0e0" }}>{v}</span>{j < Object.entries(n.data).length - 1 ? ", " : ""}</span>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ background: "#13131f", borderRadius: 8, padding: "12px 16px" }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#6a6a8a", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, fontFamily: sans }}>Edges (Relationships)</div>
+        {data.edges.map((e, i) => (
+          <div key={i} style={{ fontSize: 12, fontFamily: mono, color: "#a0a0b0", lineHeight: 1.8 }}>{e}</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ── Vector Schema Diagram ── */
+function VectorSchemaViz({ schema, accent }) {
+  return (
+    <div style={{ marginTop: 16 }}>
+      <h4 style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 700, color: accent, textTransform: "uppercase", letterSpacing: 1, fontFamily: sans }}>Collection Schema — <span style={{ fontFamily: mono, fontWeight: 400 }}>{schema.collectionName}</span></h4>
+      <div style={{ background: "#13131f", borderRadius: 8, overflow: "hidden" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 100px 1fr", gap: 0, fontSize: 11, fontWeight: 700, color: "#6a6a8a", textTransform: "uppercase", letterSpacing: 0.8, padding: "8px 16px", borderBottom: "1px solid #1a1a2e", fontFamily: sans }}>
+          <div>Field</div><div>Type</div><div>Description</div>
+        </div>
+        {schema.fields.map((f, i) => (
+          <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 100px 1fr", gap: 0, padding: "6px 16px", borderBottom: i < schema.fields.length - 1 ? "1px solid #1a1a2e" : "none", background: f.isVector ? `${accent}08` : "transparent" }}>
+            <div style={{ fontSize: 12, fontFamily: mono, color: f.isVector ? accent : "#e0e0e0", fontWeight: f.isVector ? 700 : 400 }}>{f.name}</div>
+            <div style={{ fontSize: 11, fontFamily: mono, color: f.isVector ? accent : "#8080a0" }}>{f.type}</div>
+            <div style={{ fontSize: 11.5, fontFamily: sans, color: "#8080a0" }}>{f.desc || ""}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ── Vector Sample Data ── */
+function VectorSampleData({ data, accent }) {
+  return (
+    <div style={{ marginTop: 16 }}>
+      <h4 style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 700, color: accent, textTransform: "uppercase", letterSpacing: 1, fontFamily: sans }}>Sample Results</h4>
+      <p style={{ fontSize: 12.5, color: "#8080a0", lineHeight: 1.6, fontFamily: sans, marginBottom: 12 }}>{data.description}</p>
+      {data.records.map((rec, i) => {
+        const entries = Object.entries(rec);
+        return (
+          <div key={i} style={{ background: "#13131f", borderRadius: 8, padding: "12px 16px", marginBottom: 8, borderLeft: `3px solid ${accent}${i === 0 ? "" : "60"}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <span style={{ fontSize: 12, fontFamily: mono, color: accent, fontWeight: 700 }}>#{i + 1}</span>
+              {rec.similarity && <span style={{ fontSize: 11, fontFamily: mono, color: i === 0 ? "#4ade80" : "#8080a0", background: i === 0 ? "#4ade8015" : "transparent", padding: "2px 8px", borderRadius: 4 }}>cosine: {rec.similarity}</span>}
+            </div>
+            {entries.filter(([k]) => k !== "similarity" && k !== "embedding" && k !== "image_embedding").map(([k, v], j) => (
+              <div key={j} style={{ fontSize: 12, fontFamily: mono, color: "#a0a0b0", lineHeight: 1.7 }}>
+                <span style={{ color: "#6a6a8a" }}>{k}: </span>
+                <span style={{ color: k.includes("text") || k === "name" ? "#e0e0e0" : "#a0a0b0" }}>{v}</span>
+              </div>
+            ))}
+            {(rec.embedding || rec.image_embedding) && (
+              <div style={{ fontSize: 11, fontFamily: mono, color: `${accent}80`, marginTop: 4 }}>
+                embedding: {rec.embedding || rec.image_embedding}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+
+/* ── Main Example Card ── */
 function ExampleCard({ example, type }) {
   const [expanded, setExpanded] = useState(false);
-  const accentColor = type === "graph" ? "#2dd4bf" : "#a78bfa";
+  const [showSchema, setShowSchema] = useState(true);
+  const accent = type === "graph" ? "#2dd4bf" : "#a78bfa";
   const bgTint = type === "graph" ? "rgba(45,212,191,0.04)" : "rgba(167,139,250,0.04)";
 
   return (
@@ -200,74 +552,150 @@ function ExampleCard({ example, type }) {
         <div style={{ fontSize: 28, lineHeight: 1 }}>{example.icon}</div>
         <div style={{ flex: 1 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-            <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: "#e8e8e8", fontFamily: "'DM Sans', sans-serif" }}>{example.title}</h3>
+            <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: "#e8e8e8", fontFamily: sans }}>{example.title}</h3>
             {example.industry && (
-              <span style={{ fontSize: 11, color: accentColor, background: `${accentColor}15`, padding: "3px 10px", borderRadius: 20, fontWeight: 600, letterSpacing: 0.3, fontFamily: "'DM Sans', sans-serif" }}>{example.industry}</span>
+              <span style={{ fontSize: 11, color: accent, background: `${accent}15`, padding: "3px 10px", borderRadius: 20, fontWeight: 600, letterSpacing: 0.3, fontFamily: sans }}>{example.industry}</span>
             )}
           </div>
-          <p style={{ margin: "10px 0 0", fontSize: 14, lineHeight: 1.65, color: "#a0a0b0", fontFamily: "'DM Sans', sans-serif" }}>{example.scenario}</p>
-          <button onClick={() => setExpanded(!expanded)} style={{ marginTop: 12, background: "none", border: `1px solid ${accentColor}40`, color: accentColor, padding: "6px 16px", borderRadius: 6, fontSize: 13, fontWeight: 600, fontFamily: "'DM Sans', sans-serif" }}>
+          <p style={{ margin: "10px 0 0", fontSize: 14, lineHeight: 1.65, color: "#a0a0b0", fontFamily: sans }}>{example.scenario}</p>
+          <button onClick={() => setExpanded(!expanded)} style={{ marginTop: 12, background: "none", border: `1px solid ${accent}40`, color: accent, padding: "6px 16px", borderRadius: 6, fontSize: 13, fontWeight: 600, fontFamily: sans }}>
             {expanded ? "Collapse ▲" : "Show Details ▼"}
           </button>
         </div>
       </div>
       {expanded && (
-        <div style={{ marginTop: 18, paddingTop: 18, borderTop: `1px solid ${accentColor}15` }}>
-          <div style={{ marginBottom: 16 }}>
-            <h4 style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: accentColor, textTransform: "uppercase", letterSpacing: 1, fontFamily: "'DM Sans', sans-serif" }}>How It Works</h4>
-            {example.howItWorks.map((step, i) => (
-              <div key={i} style={{ display: "flex", gap: 10, marginBottom: 8, fontSize: 13.5, lineHeight: 1.6, color: "#a0a0b0", fontFamily: "'DM Sans', sans-serif" }}>
-                <span style={{ color: accentColor, fontWeight: 700, minWidth: 18, fontFamily: "'JetBrains Mono', monospace", fontSize: 12, marginTop: 2 }}>{String(i + 1).padStart(2, "0")}</span>
-                <span>{step}</span>
+        <div style={{ marginTop: 18, paddingTop: 18, borderTop: `1px solid ${accent}15` }}>
+          <div style={{ display: "flex", gap: 4, marginBottom: 16, background: "rgba(255,255,255,0.03)", padding: 4, borderRadius: 8, width: "fit-content" }}>
+            {["Schema & Data", "How It Works"].map((tab, idx) => {
+              const active = idx === 0 ? showSchema : !showSchema;
+              return (
+                <button key={idx} onClick={() => setShowSchema(idx === 0)} style={{ background: active ? `${accent}15` : "transparent", border: active ? `1px solid ${accent}25` : "1px solid transparent", color: active ? accent : "#6a6a8a", padding: "5px 14px", borderRadius: 6, fontSize: 12, fontWeight: 600, fontFamily: sans }}>
+                  {tab}
+                </button>
+              );
+            })}
+          </div>
+
+          {showSchema ? (
+            <>
+              {type === "graph" && example.schema && <GraphSchemaViz schema={example.schema} accent={accent} />}
+              {type === "vector" && example.schema && <VectorSchemaViz schema={example.schema} accent={accent} />}
+              {type === "graph" && example.sampleData && <GraphSampleData data={example.sampleData} accent={accent} />}
+              {type === "vector" && example.sampleData && <VectorSampleData data={example.sampleData} accent={accent} />}
+            </>
+          ) : (
+            <>
+              <div style={{ marginBottom: 16 }}>
+                <h4 style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: accent, textTransform: "uppercase", letterSpacing: 1, fontFamily: sans }}>How It Works</h4>
+                {example.howItWorks.map((step, i) => (
+                  <div key={i} style={{ display: "flex", gap: 10, marginBottom: 8, fontSize: 13.5, lineHeight: 1.6, color: "#a0a0b0", fontFamily: sans }}>
+                    <span style={{ color: accent, fontWeight: 700, minWidth: 18, fontFamily: mono, fontSize: 12, marginTop: 2 }}>{String(i + 1).padStart(2, "0")}</span>
+                    <span>{step}</span>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-          <CodeBlock code={example.query} lang={example.queryLang} />
-          <div style={{ marginTop: 16, padding: "12px 16px", background: `${accentColor}08`, borderLeft: `3px solid ${accentColor}`, borderRadius: "0 6px 6px 0", fontSize: 13, lineHeight: 1.6, color: "#a0a0b0", fontFamily: "'DM Sans', sans-serif" }}>
-            <strong style={{ color: "#e8e8e8" }}>Why not {type === "graph" ? "SQL" : "a graph database"}?</strong>{" "}
-            {type === "graph" ? example.whyNotSQL : example.whyNotGraph}
-          </div>
+              <CodeBlock code={example.query} lang={example.queryLang} />
+              <div style={{ marginTop: 16, padding: "12px 16px", background: `${accent}08`, borderLeft: `3px solid ${accent}`, borderRadius: "0 6px 6px 0", fontSize: 13, lineHeight: 1.6, color: "#a0a0b0", fontFamily: sans }}>
+                <strong style={{ color: "#e8e8e8" }}>Why not {type === "graph" ? "SQL" : "a graph database"}?</strong>{" "}
+                {type === "graph" ? example.whyNotSQL : example.whyNotGraph}
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
   );
 }
 
+
+/* ── Combined Card (Both Together) ── */
 function CombinedCard({ example }) {
   const [expanded, setExpanded] = useState(false);
+  const [showSchema, setShowSchema] = useState(true);
+
   return (
     <div style={{ background: "linear-gradient(135deg, rgba(45,212,191,0.04), rgba(167,139,250,0.04))", border: "1px solid rgba(120,120,180,0.15)", borderRadius: 12, padding: "22px 24px", marginBottom: 16 }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 14 }}>
         <div style={{ fontSize: 28, lineHeight: 1 }}>{example.icon}</div>
         <div style={{ flex: 1 }}>
-          <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: "#e8e8e8", fontFamily: "'DM Sans', sans-serif" }}>{example.title}</h3>
-          <p style={{ margin: "10px 0 0", fontSize: 14, lineHeight: 1.65, color: "#a0a0b0", fontFamily: "'DM Sans', sans-serif" }}>{example.scenario}</p>
-          <button onClick={() => setExpanded(!expanded)} style={{ marginTop: 12, background: "none", border: "1px solid rgba(120,120,180,0.3)", color: "#9090c0", padding: "6px 16px", borderRadius: 6, fontSize: 13, fontWeight: 600, fontFamily: "'DM Sans', sans-serif" }}>
+          <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: "#e8e8e8", fontFamily: sans }}>{example.title}</h3>
+          <p style={{ margin: "10px 0 0", fontSize: 14, lineHeight: 1.65, color: "#a0a0b0", fontFamily: sans }}>{example.scenario}</p>
+          <button onClick={() => setExpanded(!expanded)} style={{ marginTop: 12, background: "none", border: "1px solid rgba(120,120,180,0.3)", color: "#9090c0", padding: "6px 16px", borderRadius: 6, fontSize: 13, fontWeight: 600, fontFamily: sans }}>
             {expanded ? "Collapse ▲" : "Show Details ▼"}
           </button>
         </div>
       </div>
       {expanded && (
         <div style={{ marginTop: 18, paddingTop: 18, borderTop: "1px solid rgba(120,120,180,0.1)" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
-            <div style={{ padding: "14px 16px", background: "rgba(45,212,191,0.06)", borderRadius: 8, borderLeft: "3px solid #2dd4bf" }}>
-              <h4 style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 700, color: "#2dd4bf", textTransform: "uppercase", letterSpacing: 1, fontFamily: "'DM Sans', sans-serif" }}>Graph Role</h4>
-              <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: "#a0a0b0", fontFamily: "'DM Sans', sans-serif" }}>{example.graphRole}</p>
-            </div>
-            <div style={{ padding: "14px 16px", background: "rgba(167,139,250,0.06)", borderRadius: 8, borderLeft: "3px solid #a78bfa" }}>
-              <h4 style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 700, color: "#a78bfa", textTransform: "uppercase", letterSpacing: 1, fontFamily: "'DM Sans', sans-serif" }}>Vector Role</h4>
-              <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: "#a0a0b0", fontFamily: "'DM Sans', sans-serif" }}>{example.vectorRole}</p>
-            </div>
+          <div style={{ display: "flex", gap: 4, marginBottom: 16, background: "rgba(255,255,255,0.03)", padding: 4, borderRadius: 8, width: "fit-content" }}>
+            {["Schemas", "How They Work Together"].map((tab, idx) => {
+              const active = idx === 0 ? showSchema : !showSchema;
+              return (
+                <button key={idx} onClick={() => setShowSchema(idx === 0)} style={{ background: active ? "rgba(120,120,180,0.15)" : "transparent", border: active ? "1px solid rgba(120,120,180,0.25)" : "1px solid transparent", color: active ? "#b0b0d0" : "#6a6a8a", padding: "5px 14px", borderRadius: 6, fontSize: 12, fontWeight: 600, fontFamily: sans }}>
+                  {tab}
+                </button>
+              );
+            })}
           </div>
-          <div style={{ padding: "12px 16px", background: "rgba(120,120,180,0.06)", borderRadius: 8, fontSize: 13.5, lineHeight: 1.65, color: "#a0a0b0", fontFamily: "'DM Sans', sans-serif" }}>
-            <strong style={{ color: "#e8e8e8" }}>Key Insight: </strong>{example.insight}
-          </div>
+
+          {showSchema ? (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#2dd4bf", textTransform: "uppercase", letterSpacing: 1, marginBottom: 10, fontFamily: sans }}>Graph Schema</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {example.graphSchema.nodes.map((n, i) => (
+                    <div key={i} style={{ background: `${n.color}10`, border: `1px solid ${n.color}25`, borderRadius: 6, padding: "8px 12px" }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: n.color, fontFamily: sans }}>:{n.label}</div>
+                      <div style={{ fontSize: 10.5, fontFamily: mono, color: "#8080a0", marginTop: 4 }}>{n.props.join(", ")}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ marginTop: 10, background: "#13131f", borderRadius: 6, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#4a4a6a", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4 }}>Edges</div>
+                  {example.graphSchema.edges.map((e, i) => (
+                    <div key={i} style={{ fontSize: 11, fontFamily: mono, color: "#8080a0", lineHeight: 1.7 }}>
+                      (:{e.from}) —[:{e.label}]→ (:{e.to})
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#a78bfa", textTransform: "uppercase", letterSpacing: 1, marginBottom: 10, fontFamily: sans }}>Vector Collection — <span style={{ fontWeight: 400, fontFamily: mono }}>{example.vectorSchema.collectionName}</span></div>
+                <div style={{ background: "#13131f", borderRadius: 6, overflow: "hidden" }}>
+                  {example.vectorSchema.fields.map((f, i) => (
+                    <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "5px 12px", borderBottom: i < example.vectorSchema.fields.length - 1 ? "1px solid #1a1a2e" : "none", background: f.isVector ? "rgba(167,139,250,0.06)" : "transparent" }}>
+                      <span style={{ fontSize: 11.5, fontFamily: mono, color: f.isVector ? "#a78bfa" : "#c0c0d0", fontWeight: f.isVector ? 700 : 400 }}>{f.name}</span>
+                      <span style={{ fontSize: 10.5, fontFamily: mono, color: f.isVector ? "#a78bfa" : "#6a6a8a" }}>{f.type}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+                <div style={{ padding: "14px 16px", background: "rgba(45,212,191,0.06)", borderRadius: 8, borderLeft: "3px solid #2dd4bf" }}>
+                  <h4 style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 700, color: "#2dd4bf", textTransform: "uppercase", letterSpacing: 1, fontFamily: sans }}>Graph Role</h4>
+                  <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: "#a0a0b0", fontFamily: sans }}>{example.graphRole}</p>
+                </div>
+                <div style={{ padding: "14px 16px", background: "rgba(167,139,250,0.06)", borderRadius: 8, borderLeft: "3px solid #a78bfa" }}>
+                  <h4 style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 700, color: "#a78bfa", textTransform: "uppercase", letterSpacing: 1, fontFamily: sans }}>Vector Role</h4>
+                  <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: "#a0a0b0", fontFamily: sans }}>{example.vectorRole}</p>
+                </div>
+              </div>
+              <div style={{ padding: "12px 16px", background: "rgba(120,120,180,0.06)", borderRadius: 8, fontSize: 13.5, lineHeight: 1.65, color: "#a0a0b0", fontFamily: sans }}>
+                <strong style={{ color: "#e8e8e8" }}>Key Insight: </strong>{example.insight}
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
   );
 }
 
+
+/* ═══════════════════ MAIN APP ═══════════════════ */
 function App() {
   const [activeTab, setActiveTab] = useState("graph");
   const tabs = [
@@ -277,18 +705,18 @@ function App() {
   ];
 
   return (
-    <div style={{ minHeight: "100vh", padding: "36px 28px", maxWidth: 800, margin: "0 auto" }}>
+    <div style={{ minHeight: "100vh", padding: "36px 28px", maxWidth: 820, margin: "0 auto" }}>
       <div style={{ marginBottom: 32 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
           <div style={{ width: 36, height: 4, background: "linear-gradient(90deg, #2dd4bf, #a78bfa)", borderRadius: 2 }} />
           <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#6a6a8a" }}>Database Comparison</span>
         </div>
         <h1 style={{ margin: "12px 0 0", fontSize: 30, fontWeight: 700, lineHeight: 1.2, background: "linear-gradient(135deg, #2dd4bf, #a78bfa)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Graph vs. Vector Databases</h1>
-        <p style={{ margin: "12px 0 0", fontSize: 15, color: "#6a6a8a", lineHeight: 1.6, maxWidth: 600 }}>Practical, industry-grounded examples showing when to use each technology — and when you need both.</p>
+        <p style={{ margin: "12px 0 0", fontSize: 15, color: "#6a6a8a", lineHeight: 1.6, maxWidth: 600 }}>Practical, industry-grounded examples showing when to use each technology — and when you need both. Expand each example to explore the schema, sample data, queries, and rationale.</p>
         <p style={{ margin: "6px 0 0", fontSize: 12, color: "#4a4a6a" }}>CGS 2263 — Database Concepts &amp; Design — Miami Dade College — Spring 2026</p>
         <div style={{ display: "flex", gap: 20, marginTop: 28, padding: "6px 8px", background: "rgba(255,255,255,0.03)", borderRadius: 10, width: "fit-content" }}>
           {tabs.map((tab) => (
-            <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{ background: activeTab === tab.id ? `${tab.color}18` : "transparent", border: activeTab === tab.id ? `1px solid ${tab.color}30` : "1px solid transparent", color: activeTab === tab.id ? tab.color : "#6a6a8a", padding: "8px 22px", borderRadius: 7, fontSize: 14, fontWeight: 600, fontFamily: "'DM Sans', sans-serif", letterSpacing: 0.2 }}>
+            <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{ background: activeTab === tab.id ? `${tab.color}18` : "transparent", border: activeTab === tab.id ? `1px solid ${tab.color}30` : "1px solid transparent", color: activeTab === tab.id ? tab.color : "#6a6a8a", padding: "8px 22px", borderRadius: 7, fontSize: 14, fontWeight: 600, fontFamily: sans, letterSpacing: 0.2 }}>
               {tab.label}
             </button>
           ))}
@@ -298,7 +726,7 @@ function App() {
         {activeTab === "graph" && (
           <>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18, padding: "10px 16px", background: "rgba(45,212,191,0.06)", borderRadius: 8, fontSize: 13.5, color: "#2dd4bf", lineHeight: 1.5 }}>
-              <span style={{ fontSize: 18 }}>{"↔"}</span>
+              <span style={{ fontSize: 18 }}>↔</span>
               <span><strong>Core question:</strong> "What is <em>connected</em> to this?" — traversing explicit relationships between entities</span>
             </div>
             {graphExamples.map((ex, i) => <ExampleCard key={i} example={ex} type="graph" />)}
@@ -307,7 +735,7 @@ function App() {
         {activeTab === "vector" && (
           <>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18, padding: "10px 16px", background: "rgba(167,139,250,0.06)", borderRadius: 8, fontSize: 13.5, color: "#a78bfa", lineHeight: 1.5 }}>
-              <span style={{ fontSize: 18 }}>{"≈"}</span>
+              <span style={{ fontSize: 18 }}>≈</span>
               <span><strong>Core question:</strong> "What is <em>similar</em> to this?" — finding semantic or visual proximity in embedding space</span>
             </div>
             {vectorExamples.map((ex, i) => <ExampleCard key={i} example={ex} type="vector" />)}
@@ -316,7 +744,7 @@ function App() {
         {activeTab === "both" && (
           <>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18, padding: "10px 16px", background: "rgba(120,120,180,0.06)", borderRadius: 8, fontSize: 13.5, color: "#9090c0", lineHeight: 1.5 }}>
-              <span style={{ fontSize: 18 }}>{"⚡"}</span>
+              <span style={{ fontSize: 18 }}>⚡</span>
               <span><strong>Combined power:</strong> Vector finds what's <em>relevant</em>, graph explains how things <em>relate</em> — together they give AI systems richer context</span>
             </div>
             {bothExamples.map((ex, i) => <CombinedCard key={i} example={ex} />)}
